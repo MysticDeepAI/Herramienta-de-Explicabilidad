@@ -1,0 +1,17 @@
+# render.yaml — Render Blueprint
+# https://docs.render.com/blueprint-spec
+
+services:
+  - type: web
+    name: profile-xai-api
+    runtime: python
+    plan: free            # cámbialo a "starter" si necesitas más recursos
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: UPLOAD_DIR
+        value: /tmp/uploads
+      - key: CORS_ORIGIN
+        value: "*"        # reemplaza con el dominio de tu frontend en producción
