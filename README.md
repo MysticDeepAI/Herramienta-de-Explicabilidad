@@ -1,4 +1,4 @@
-# Profile XAI API
+# Herramienta de Explicabilidad
 
 API de explicabilidad adaptada al perfil del usuario.  
 Sube un dataset (`.csv`) y un modelo entrenado (`.pkl`), selecciona una instancia y obtén predicciones acompañadas de explicaciones LIME ajustadas al nivel del usuario (experto / no-experto).
