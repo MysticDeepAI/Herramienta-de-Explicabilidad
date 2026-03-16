@@ -5,6 +5,7 @@ Sube un dataset (`.csv`) y un modelo entrenado (`.pkl`), selecciona una instanci
 
 Puede probar el servicio desde este enlace: https://v0-profile-xai-wizard.vercel.app/
 
+**Archivos de prueba:** En la carpeta [`test_data/`](./test_data/) encontrarás un dataset, un modelo y un PDF de base de conocimiento listos para probar el sistema.
 
 ---
 
