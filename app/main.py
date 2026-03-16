@@ -45,11 +45,10 @@ def _get_job(job_id: str) -> Dict[str, Any]:
 
 # ─── Endpoints ──────────────────────────────────────────────────────────────────
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def health():
     """Health-check básico que Render usa para saber si el servicio está vivo."""
     return {"status": "ok", "service": "profile-xai-api"}
-
 
 @app.post("/api/processing/start")
 async def start_processing():
