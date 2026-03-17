@@ -8,15 +8,7 @@ import pandas as pd
 
 
 def infer_column_type(series: pd.Series) -> str:
-    """
-    Determina si una columna es 'numerical', 'categorical' o 'text'.
-
-    Reglas:
-      - Numérica con ≤10 valores únicos enteros → categorical
-      - Numérica con decimales o muchos únicos  → numerical
-      - Texto con ≤20 valores únicos             → categorical
-      - Texto con >20 valores únicos              → text
-    """
+    """Determina si una columna es 'numerical', 'categorical' o 'text'."""
     nunique = series.dropna().nunique()
 
     if pd.api.types.is_numeric_dtype(series):

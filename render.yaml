@@ -14,4 +14,14 @@ services:
       - key: UPLOAD_DIR
         value: /tmp/uploads
       - key: CORS_ORIGIN
-        value: "*"        # reemplaza con el dominio de tu frontend en producción
+        value: "*"
+      - key: GCP_PROJECT_ID
+        sync: false       # se configura manualmente en el dashboard de Render
+      - key: GCP_LOCATION
+        value: "us-central1"
+      - key: GEMINI_API_KEY
+        sync: false       # se configura manualmente en el dashboard de Render
+      - key: GEMINI_MODEL
+        value: "gemini-2.5-flash"
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false       # ruta al JSON de Service Account (si aplica)

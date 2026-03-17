@@ -1,8 +1,20 @@
+# ── Core API ──────────────────────────────────────────────
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+
+# ── Data & ML ─────────────────────────────────────────────
 pandas==2.2.2
 numpy==1.26.4
 scikit-learn==1.5.1
 joblib==1.4.2
+
+# ── XAI Explainers ───────────────────────────────────────
 lime==0.2.0.1
-python-multipart==0.0.9
+shap==0.46.0
+anchor-exp==0.0.2.0
+
+# ── Vertex AI + LangChain (activar cuando se configure GCP) ──
+# google-cloud-aiplatform>=1.74.0
+# langchain>=0.3.25
+# langchain-google-genai>=2.1.4

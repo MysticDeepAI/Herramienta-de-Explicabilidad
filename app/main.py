@@ -1,28 +1,46 @@
 """
-Profile XAI API — Backend para explicabilidad de modelos ML con LIME.
-Diseñado para despliegue en Render (o cualquier PaaS con soporte Python).
+Profile XAI API — Backend v2 (intermedio).
+
+Motor XAI completo: SHAP + LIME + Anchor + métricas + selección automática.
+RAG y Chat desactivados hasta configurar Vertex AI.
+Narrativas generadas con texto simple por ahora.
 """
 
+import json
 import os
 import uuid
-from typing import Any, Dict, List
+import logging
+from typing import Any, Dict, List, Optional
 
 import joblib
-import lime.lime_tabular
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sklearn.preprocessing import LabelEncoder
 
 from app.config import settings
 from app.utils import infer_column_type, save_upload
+from app.modeling import ModelExplainer
+from app.explanation import ExplanationEngine
 
-# ─── App ────────────────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# ── Detectar si RAG está disponible ──────────────────────────────────────
+HAS_RAG = False
+try:
+    from app.rag import RAGEngine
+    HAS_RAG = True
+    logger.info("RAG Engine (Vertex AI + LangChain) disponible")
+except ImportError as e:
+    logger.info("RAG no disponible (%s) — narrativas sin LLM", e)
+
+
+# ─── App ────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Profile XAI API",
-    version="1.0.0",
-    description="API de explicabilidad adaptada al perfil del usuario (LIME).",
+    title="ProfileXAI API",
+    version="2.0.0",
+    description="API de explicabilidad adaptativa — SHAP, LIME, Anchor + RAG + Chat",
 )
 
 app.add_middleware(
@@ -33,7 +51,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Almacén en memoria de trabajos (suficiente para prototipo).
 JOB_STORE: Dict[str, Dict[str, Any]] = {}
 
 
@@ -43,28 +60,39 @@ def _get_job(job_id: str) -> Dict[str, Any]:
     return JOB_STORE[job_id]
 
 
-# ─── Endpoints ──────────────────────────────────────────────────────────────────
+# ─── Health check ───────────────────────────────────────────────────────
 
-@app.api_route("/", methods=["GET", "HEAD"])
+@app.get("/")
 async def health():
-    """Health-check básico que Render usa para saber si el servicio está vivo."""
-    return {"status": "ok", "service": "profile-xai-api"}
+    return {
+        "status": "ok",
+        "service": "profile-xai-api",
+        "version": "2.0.0",
+        "rag_available": HAS_RAG,
+    }
+
+
+# ─── Procesamiento ──────────────────────────────────────────────────────
 
 @app.post("/api/processing/start")
 async def start_processing():
-    """Crea un nuevo trabajo y devuelve su ID."""
     jid = f"job_{uuid.uuid4().hex[:8]}"
-    JOB_STORE[jid] = {"dataset_csv": None, "model_path": None}
+    JOB_STORE[jid] = {
+        "dataset_csv": None,
+        "model_path": None,
+        "kb_files": [],
+        "rag_engine": None,
+        "explanation_engine": None,
+    }
     return {"jobId": jid, "status": "ready"}
 
 
+# ─── Uploads ────────────────────────────────────────────────────────────
+
 @app.post("/api/upload/{upload_type}")
 async def upload_files(
-    upload_type: str,
-    jobId: str,
-    files: List[UploadFile] = File(...),
+    upload_type: str, jobId: str, files: List[UploadFile] = File(...),
 ):
-    """Sube archivos de dataset (.csv) o modelo (.pkl / .h5)."""
     job = _get_job(jobId)
     folder = os.path.join(settings.UPLOAD_DIR, jobId, upload_type)
 
@@ -75,15 +103,28 @@ async def upload_files(
 
         if upload_type == "dataset" and f.filename.endswith(".csv"):
             job["dataset_csv"] = path
-        elif upload_type == "model" and f.filename.endswith((".pkl", ".h5")):
+        elif upload_type == "model" and f.filename.endswith((".pkl", ".h5", ".joblib")):
             job["model_path"] = path
+        elif upload_type == "knowledge-base":
+            job["kb_files"].append(path)
+
+    # Inicializar RAG si está disponible
+    if upload_type == "knowledge-base" and job["kb_files"] and HAS_RAG:
+        try:
+            if job["rag_engine"] is None:
+                job["rag_engine"] = RAGEngine()
+            n = job["rag_engine"].ingest(job["kb_files"])
+            logger.info("RAG: %d archivos indexados para job %s", n, jobId)
+        except Exception as e:
+            logger.warning("RAG no pudo inicializarse: %s", e)
 
     return {"jobId": jobId, "uploaded": saved}
 
 
+# ─── Schema del dataset ─────────────────────────────────────────────────
+
 @app.get("/api/dataset/schema")
 async def dataset_schema(jobId: str):
-    """Devuelve el esquema del dataset (nombre, tipo y opciones de cada columna)."""
     job = _get_job(jobId)
     if not job.get("dataset_csv"):
         return {"columns": []}
@@ -101,9 +142,10 @@ async def dataset_schema(jobId: str):
     return {"columns": columns}
 
 
+# ─── Instancia aleatoria ────────────────────────────────────────────────
+
 @app.get("/api/dataset/random-instance")
 async def random_instance(jobId: str):
-    """Devuelve una fila aleatoria del dataset para prellenar el formulario."""
     job = _get_job(jobId)
     if not job.get("dataset_csv"):
         raise HTTPException(status_code=400, detail="Dataset no subido.")
@@ -113,108 +155,177 @@ async def random_instance(jobId: str):
     return {k: (None if pd.isna(v) else v) for k, v in row.items()}
 
 
+# ─── Explicación principal ──────────────────────────────────────────────
+
+def _get_or_create_engine(job: dict, features: List[str]) -> ExplanationEngine:
+    """Inicializa el ExplanationEngine si no existe."""
+    if job["explanation_engine"] is not None:
+        return job["explanation_engine"]
+
+    df = pd.read_csv(job["dataset_csv"])
+
+    me = ModelExplainer(
+        pipeline_path=job["model_path"],
+        background_data=df[features],
+    )
+
+    # Detectar clases y crear label_map
+    if hasattr(me.model, "classes_"):
+        label_map = {int(c): str(c) for c in me.model.classes_}
+    else:
+        label_map = {0: "Class 0", 1: "Class 1"}
+
+    engine = ExplanationEngine(
+        model_explainer=me,
+        target_name="target",
+        label_map=label_map,
+    )
+    job["explanation_engine"] = engine
+    return engine
+
+
 @app.post("/api/explain")
 async def explain(payload: dict):
-    """Genera la predicción + explicación LIME adaptada al perfil del usuario."""
+    """
+    Genera predicción + explicación con ExplanationEngine completo.
+    Soporta selección automática del mejor método o método forzado.
+    """
     job_id = payload.get("jobId")
     instance_dict = payload.get("instance", {})
     profile = payload.get("profile", "non-expert")
+    method = payload.get("method")  # "shap", "lime", "anchor", o None=auto
 
     if not instance_dict:
         raise HTTPException(status_code=400, detail="El formulario llegó vacío.")
 
     job = _get_job(job_id)
     if not job.get("dataset_csv") or not job.get("model_path"):
-        raise HTTPException(
-            status_code=400,
-            detail="Faltan archivos: asegúrate de subir dataset y modelo.",
-        )
+        raise HTTPException(status_code=400, detail="Faltan dataset o modelo.")
 
-    df_raw = pd.read_csv(job["dataset_csv"])
-    model = joblib.load(job["model_path"])
     features = list(instance_dict.keys())
 
-    # --- Codificación de categorías para LIME ---
-    label_encoders: dict[str, LabelEncoder] = {}
-    categorical_idx: list[int] = []
-    df_lime = df_raw[features].copy()
-
-    for i, col in enumerate(features):
-        if df_lime[col].dtype == "object" or df_lime[col].dtype.name == "category":
-            le = LabelEncoder()
-            df_lime[col] = le.fit_transform(df_lime[col].fillna("").astype(str))
-            label_encoders[col] = le
-            categorical_idx.append(i)
-        else:
-            df_lime[col] = df_lime[col].fillna(0)
-
-    # Instancia codificada
-    inst_df = pd.DataFrame([instance_dict])
-    for col, le in label_encoders.items():
-        val = str(inst_df[col].iloc[0])
-        inst_df[col] = le.transform([val]) if val in le.classes_ else 0
-
-    # Wrapper de predicción
-    def _predict(numpy_data: np.ndarray) -> np.ndarray:
-        tmp = pd.DataFrame(numpy_data, columns=features)
-        for col in features:
-            if col in label_encoders:
-                tmp[col] = label_encoders[col].inverse_transform(tmp[col].astype(int))
-            else:
-                tmp[col] = tmp[col].astype(df_raw[col].dtype)
-        return model.predict_proba(tmp)
-
     try:
-        explainer = lime.lime_tabular.LimeTabularExplainer(
-            training_data=df_lime.values,
-            feature_names=features,
-            categorical_features=categorical_idx,
-            mode="classification",
-        )
-        exp = explainer.explain_instance(
-            data_row=inst_df.iloc[0].values,
-            predict_fn=_predict,
-            num_features=10,
-        )
+        engine = _get_or_create_engine(job, features)
+        result = engine.explain_instance(instance_dict, method=method)
 
-        # Predicción real (sin codificar)
-        df_real = pd.DataFrame([instance_dict])
-        prediccion = str(model.predict(df_real)[0])
-        confianza = float(np.max(model.predict_proba(df_real)[0])) * 100
+        # ── Generar narrativa ────────────────────────────────────────────
+        natural_text = ""
 
-        # Explicación natural adaptada al perfil
-        sorted_feats = sorted(exp.as_list(), key=lambda x: abs(x[1]), reverse=True)
-        top_feat = sorted_feats[0][0] if sorted_feats else "desconocida"
+        # Intentar con RAG si está disponible
+        rag_engine = job.get("rag_engine")
+        if rag_engine:
+            try:
+                natural_text = rag_engine.generate_narrative(
+                    explanation_data=result, profile=profile,
+                )
+            except Exception as e:
+                logger.warning("RAG narrative falló: %s", e)
 
-        if profile == "domain-expert":
-            texto = (
-                f"El modelo ha clasificado la instancia como '{prediccion}' "
-                f"con una confianza del {confianza:.2f}%.\n\n"
-                f"Desde una perspectiva analítica, el factor determinante ha sido "
-                f"'{top_feat}', el cual presenta el mayor peso en la decisión local "
-                f"de LIME. Las métricas de importancia sugieren evaluar cuidadosamente "
-                f"esta variable para validar la consistencia del resultado."
-            )
-        else:
-            texto = (
-                f"¡Hola! El sistema ha analizado los datos y concluye que este caso "
-                f"corresponde a '{prediccion}'.\n\n"
-                f"La característica que más influyó fue '{top_feat}'. "
-                f"En términos sencillos: si el valor de '{top_feat}' fuera diferente, "
-                f"es muy probable que el resultado también hubiera cambiado."
-            )
+        # Fallback: narrativa simple sin LLM
+        if not natural_text:
+            natural_text = _build_narrative(result, profile)
 
         return {
-            "prediction": prediccion,
+            "prediction": result["prediction"],
+            "label": result.get("label", result["prediction"]),
             "profile": profile,
-            "natural": texto,
+            "method_used": result["method_used"],
+            "natural": natural_text,
             "technical": {
-                "lime": [
-                    {"feature": f, "weight": float(w)} for f, w in exp.as_list()
-                ],
-                "metrics": [{"name": "Confianza", "value": f"{confianza:.2f}%"}],
+                "explanation": result["explanation"],
+                "metrics": result.get("metrics"),
             },
         }
 
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as e:
+        logger.error("Error en explain: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _build_narrative(result: dict, profile: str) -> str:
+    """Genera narrativa adaptada al perfil sin usar LLM."""
+    pred = result.get("prediction", "?")
+    label = result.get("label", pred)
+    conf = result.get("confidence", 0)
+    method = result.get("method_used", "unknown")
+
+    # Extraer el feature más importante
+    exp = result.get("explanation", {})
+    top_feat = "desconocida"
+
+    if method in ("shap", "lime"):
+        feats = exp.get("features", [])
+        if feats:
+            if method == "shap":
+                sorted_f = sorted(feats, key=lambda f: abs(f.get("shap_value", 0)), reverse=True)
+            else:
+                sorted_f = sorted(feats, key=lambda f: abs(f.get("lime_weight", 0)), reverse=True)
+            top_feat = sorted_f[0].get("name", "desconocida")
+    elif method == "anchor":
+        anchor = exp.get("anchor", {})
+        conditions = anchor.get("conditions", [])
+        if conditions:
+            top_feat = conditions[0]
+
+    if profile == "data-scientist":
+        return (
+            f"El modelo clasificó la instancia como '{label}' (clase {pred}) "
+            f"con una confianza del {conf:.2f}% usando el método {method.upper()}.\n\n"
+            f"El factor determinante fue '{top_feat}', con el mayor peso en la "
+            f"decisión local. Se recomienda evaluar la estabilidad de esta variable "
+            f"y comparar con los resultados de los otros explicadores disponibles."
+        )
+    elif profile == "domain-expert":
+        return (
+            f"El análisis indica que este caso corresponde a '{label}' "
+            f"(confianza: {conf:.2f}%). El método utilizado fue {method.upper()}.\n\n"
+            f"El factor más relevante fue '{top_feat}'. Desde la perspectiva del "
+            f"dominio, este factor debería considerarse prioritariamente en la "
+            f"evaluación profesional."
+        )
+    else:
+        return (
+            f"¡Hola! El sistema analizó los datos y concluye que este caso "
+            f"corresponde a '{label}'.\n\n"
+            f"La característica que más influyó fue '{top_feat}'. "
+            f"En términos sencillos: si el valor de '{top_feat}' fuera diferente, "
+            f"es muy probable que el resultado también hubiera cambiado."
+        )
+
+
+# ─── Chat ───────────────────────────────────────────────────────────────
+
+@app.post("/api/chat")
+async def chat(payload: dict):
+    """
+    Chat conversacional. Usa Vertex AI RAG + LangChain si está disponible,
+    sino responde que el módulo requiere configuración.
+    """
+    job_id = payload.get("jobId")
+    message = payload.get("message", "")
+    profile = payload.get("profile", "non-expert")
+    history = payload.get("history", [])
+
+    if not message:
+        raise HTTPException(status_code=400, detail="Mensaje vacío.")
+
+    job = _get_job(job_id)
+    rag_engine = job.get("rag_engine")
+
+    if rag_engine:
+        try:
+            result = rag_engine.chat(
+                message=message, profile=profile, history=history,
+            )
+            return result
+        except Exception as e:
+            logger.warning("Chat RAG falló: %s", e)
+
+    return {
+        "response": (
+            "El módulo de chat estará disponible próximamente. "
+            "Requiere configurar Vertex AI RAG Engine y Gemini. "
+            "Por ahora, puedes ver la explicación generada en la sección principal."
+        ),
+        "sources": [],
+    }
