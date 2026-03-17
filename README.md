@@ -1,4 +1,6 @@
-# Herramienta de Explicabilidad
+# Herramienta de Explicabilidad/ Explicability Tool 
+
+Esta investigación es llevada a cabo por GobLab UAI, el laboratorio público de innovación de la Facultad de Gobierno de la Universidad Adolfo Ibáñez de Chile. Cuenta con el apoyo de la siguiente subvención: ANID/SUBDIRECCIÓN DE INVESTIGACIÓN APLICADA/IT25I0161/ This research is carried out by GobLab UAI, public innovation lab of the School of Government of Adolfo Ibáñez University in Chile. It is supported by the following grant: ANID/SUBDIRECCIÓN DE INVESTIGACIÓN APLICADA/IT25I0161
 
 API de explicabilidad adaptada al perfil del usuario.  
 Sube un dataset (`.csv`) y un modelo entrenado (`.pkl`), selecciona una instancia y obtén predicciones acompañadas de explicaciones LIME ajustadas al nivel del usuario (experto / no-experto).
