@@ -62,7 +62,7 @@ def _get_job(job_id: str) -> Dict[str, Any]:
 
 # ─── Health check ───────────────────────────────────────────────────────
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def health():
     return {
         "status": "ok",
@@ -225,16 +225,16 @@ async def explain(payload: dict):
         if not natural_text:
             natural_text = _build_narrative(result, profile)
 
+        # ── Formatear respuesta para el frontend ─────────────────────────
+        technical = _format_technical_for_frontend(result)
+
         return {
             "prediction": result["prediction"],
             "label": result.get("label", result["prediction"]),
             "profile": profile,
             "method_used": result["method_used"],
             "natural": natural_text,
-            "technical": {
-                "explanation": result["explanation"],
-                "metrics": result.get("metrics"),
-            },
+            "technical": technical,
         }
 
     except Exception as e:
@@ -291,6 +291,70 @@ def _build_narrative(result: dict, profile: str) -> str:
             f"En términos sencillos: si el valor de '{top_feat}' fuera diferente, "
             f"es muy probable que el resultado también hubiera cambiado."
         )
+
+
+def _format_technical_for_frontend(result: dict) -> dict:
+    """
+    Transforma la salida del ExplanationEngine al formato que espera el frontend:
+      - technical.lime: [{feature, weight}, ...]
+      - technical.shap: [{feature, contribution}, ...]
+      - technical.anchors: ["condition1", "condition2", ...]
+      - technical.metrics: [{name, value}, ...]
+    """
+    exp = result.get("explanation", {})
+    method = result.get("method_used", "")
+    confidence = result.get("confidence", 0)
+    metrics_data = result.get("metrics")
+
+    technical: dict = {
+        "lime": [],
+        "shap": [],
+        "anchors": [],
+        "metrics": [{"name": "Confianza", "value": f"{confidence:.2f}%"}],
+    }
+
+    # ── Llenar según el método usado ─────────────────────────────────
+    features = exp.get("features", [])
+    anchor_data = exp.get("anchor", {})
+
+    if method == "lime" and features:
+        technical["lime"] = [
+            {"feature": f.get("name", ""), "weight": f.get("lime_weight", 0)}
+            for f in features
+        ]
+    elif method == "shap" and features:
+        technical["shap"] = [
+            {"feature": f.get("name", ""), "contribution": f.get("shap_value", 0)}
+            for f in features
+        ]
+    elif method == "anchor" and anchor_data:
+        technical["anchors"] = anchor_data.get("conditions", [])
+
+    # ── Métricas del explanation engine ───────────────────────────────
+    if metrics_data and isinstance(metrics_data, dict):
+        # Agregar métricas del método seleccionado
+        method_metrics = metrics_data.get(method, {})
+        if method_metrics:
+            technical["metrics"].extend([
+                {"name": "Infidelity", "value": f"{method_metrics.get('infidelity', 0):.4f}"},
+                {"name": "Lipschitz", "value": f"{method_metrics.get('lipschitz', 0):.4f}"},
+                {"name": "Eff. Complexity", "value": f"{method_metrics.get('effective_complexity', 0):.1f}"},
+            ])
+
+        # Agregar precisión y cobertura si es anchor
+        if method == "anchor" and anchor_data:
+            precision = anchor_data.get("precision")
+            coverage = anchor_data.get("coverage")
+            if precision is not None:
+                technical["metrics"].append(
+                    {"name": "Precisión Anchor", "value": f"{precision:.2%}"}
+                )
+            if coverage is not None:
+                technical["metrics"].append(
+                    {"name": "Cobertura Anchor", "value": f"{coverage:.2%}"}
+                )
+
+    return technical
 
 
 # ─── Chat ───────────────────────────────────────────────────────────────
