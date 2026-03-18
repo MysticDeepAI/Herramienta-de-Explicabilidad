@@ -171,7 +171,8 @@ def _get_or_create_engine(job: dict, features: List[str]) -> ExplanationEngine:
 
     # Detectar clases y crear label_map
     if hasattr(me.model, "classes_"):
-        label_map = {int(c): str(c) for c in me.model.classes_}
+        # Quitamos el int(c) para que soporte tanto números como textos
+        label_map = {c: str(c) for c in me.model.classes_}
     else:
         label_map = {0: "Class 0", 1: "Class 1"}
 
