@@ -370,8 +370,7 @@ class ExplanationEngine:
         return {
             "method_used": primary_method,
             "prediction": str(predicted_class),
-            "label": self.label_map.get(int(predicted_class), str(predicted_class)),
-            "confidence": round(probability * 100, 2),
+            "label": self.label_map.get(predicted_class, str(predicted_class)),            "confidence": round(probability * 100, 2),
             "explanations": explanations, # Enviamos el diccionario con los 3
             "metrics": None, # Desactivamos métricas temporalmente para ahorrar RAM
         }
@@ -470,12 +469,12 @@ class ExplanationEngine:
         anchor_conditions=None, anchor_precision=None, anchor_coverage=None,
     ) -> str:
         exp: Dict[str, Any] = {
-            "model_output": {
-                "predicted_class": predicted_class,
-                "probability": probability,
-                "label": self.label_map.get(int(predicted_class), predicted_class),
-            }
-        }
+                    "model_output": {
+                        "predicted_class": predicted_class,
+                        "probability": probability,
+                        "label": self.label_map.get(predicted_class, str(predicted_class)),
+                    }
+                }
 
         if method in ("shap", "lime"):
             feats = []
