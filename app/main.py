@@ -10,6 +10,7 @@ import json
 import os
 import uuid
 import logging
+import gc 
 from typing import Any, Dict, List, Optional
 
 import joblib
@@ -244,45 +245,42 @@ async def explain(payload: dict):
 
 
 def _build_narrative(result: dict, profile: str) -> str:
-    """Genera narrativa adaptada al perfil sin usar LLM."""
     pred = result.get("prediction", "?")
     label = result.get("label", pred)
     conf = result.get("confidence", 0)
     method = result.get("method_used", "unknown")
 
-    # Extraer el feature más importante
-    exp = result.get("explanation", {})
+    exps = result.get("explanations", {})
     top_feat = "desconocida"
 
-    if method in ("shap", "lime"):
-        feats = exp.get("features", [])
+    # Buscar la característica más importante usando el método principal que sobrevivió
+    if method in ("shap", "lime") and method in exps:
+        feats = exps[method].get("features", [])
         if feats:
             if method == "shap":
                 sorted_f = sorted(feats, key=lambda f: abs(f.get("shap_value", 0)), reverse=True)
             else:
                 sorted_f = sorted(feats, key=lambda f: abs(f.get("lime_weight", 0)), reverse=True)
             top_feat = sorted_f[0].get("name", "desconocida")
-    elif method == "anchor":
-        anchor = exp.get("anchor", {})
-        conditions = anchor.get("conditions", [])
+    elif method == "anchor" and "anchor" in exps:
+        anchor_data = exps["anchor"].get("anchor", {})
+        conditions = anchor_data.get("conditions", [])
         if conditions:
             top_feat = conditions[0]
 
     if profile == "data-scientist":
         return (
             f"El modelo clasificó la instancia como '{label}' (clase {pred}) "
-            f"con una confianza del {conf:.2f}% usando el método {method.upper()}.\n\n"
+            f"con una confianza del {conf:.2f}% (Método principal: {method.upper()}).\n\n"
             f"El factor determinante fue '{top_feat}', con el mayor peso en la "
-            f"decisión local. Se recomienda evaluar la estabilidad de esta variable "
-            f"y comparar con los resultados de los otros explicadores disponibles."
+            f"decisión local. Se recomienda revisar las otras pestañas para confirmar la estabilidad."
         )
     elif profile == "domain-expert":
         return (
             f"El análisis indica que este caso corresponde a '{label}' "
-            f"(confianza: {conf:.2f}%). El método utilizado fue {method.upper()}.\n\n"
+            f"(confianza: {conf:.2f}%).\n\n"
             f"El factor más relevante fue '{top_feat}'. Desde la perspectiva del "
-            f"dominio, este factor debería considerarse prioritariamente en la "
-            f"evaluación profesional."
+            f"dominio, evalúe las reglas y pesos en las pestañas técnicas para validar la inferencia."
         )
     else:
         return (
@@ -296,14 +294,12 @@ def _build_narrative(result: dict, profile: str) -> str:
 
 def _format_technical_for_frontend(result: dict) -> dict:
     """
-    Transforma la salida del ExplanationEngine al formato que espera el frontend:
-      - technical.lime: [{feature, weight}, ...]
-      - technical.shap: [{feature, contribution}, ...]
-      - technical.anchors: ["condition1", "condition2", ...]
-      - technical.metrics: [{name, value}, ...]
+    Transforma la salida del ExplanationEngine al formato que espera el frontend.
+    Ahora lee múltiples explicaciones simultáneas de 'explanations'.
     """
-    exp = result.get("explanation", {})
-    method = result.get("method_used", "")
+    # Usamos plural 'explanations' porque ahora vienen todas juntas
+    exps = result.get("explanations", {})
+    method = result.get("method_used", "") # El método principal que sobrevivió
     confidence = result.get("confidence", 0)
     metrics_data = result.get("metrics")
 
@@ -314,24 +310,26 @@ def _format_technical_for_frontend(result: dict) -> dict:
         "metrics": [{"name": "Confianza", "value": f"{confidence:.2f}%"}],
     }
 
-    # ── Llenar según el método usado ─────────────────────────────────
-    features = exp.get("features", [])
-    anchor_data = exp.get("anchor", {})
-
-    if method == "lime" and features:
+    # ── 1. Llenar TODOS los métodos disponibles al mismo tiempo ──
+    if "lime" in exps:
+        lime_features = exps["lime"].get("features", [])
         technical["lime"] = [
             {"feature": f.get("name", ""), "weight": f.get("lime_weight", 0)}
-            for f in features
+            for f in lime_features
         ]
-    elif method == "shap" and features:
+
+    if "shap" in exps:
+        shap_features = exps["shap"].get("features", [])
         technical["shap"] = [
             {"feature": f.get("name", ""), "contribution": f.get("shap_value", 0)}
-            for f in features
+            for f in shap_features
         ]
-    elif method == "anchor" and anchor_data:
+
+    if "anchor" in exps:
+        anchor_data = exps["anchor"].get("anchor", {})
         technical["anchors"] = anchor_data.get("conditions", [])
 
-    # ── Métricas del explanation engine ───────────────────────────────
+    # ── 2. Métricas del explanation engine (Tu código original restaurado) ──
     if metrics_data and isinstance(metrics_data, dict):
         # Agregar métricas del método seleccionado
         method_metrics = metrics_data.get(method, {})
@@ -342,8 +340,9 @@ def _format_technical_for_frontend(result: dict) -> dict:
                 {"name": "Eff. Complexity", "value": f"{method_metrics.get('effective_complexity', 0):.1f}"},
             ])
 
-        # Agregar precisión y cobertura si es anchor
-        if method == "anchor" and anchor_data:
+        # Agregar precisión y cobertura si el método principal es anchor
+        if method == "anchor" and "anchor" in exps:
+            anchor_data = exps["anchor"].get("anchor", {})
             precision = anchor_data.get("precision")
             coverage = anchor_data.get("coverage")
             if precision is not None:

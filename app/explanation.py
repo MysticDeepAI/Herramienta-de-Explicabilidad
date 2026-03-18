@@ -316,38 +316,64 @@ class ExplanationEngine:
 
     def explain_instance(self, instance, method: Optional[str] = None) -> dict:
         """
-        Genera explicación con el método indicado o selecciona el mejor
-        automáticamente evaluando métricas.
+        Genera explicaciones con LIME y Anchor de forma segura, e intenta generar SHAP.
+        Devuelve todos los resultados exitosos para que el frontend pueda mostrar
+        las tres pestañas simultáneamente.
         """
-        if method is None:
-            metrics_result, method = self.evaluate_metrics(instance)
-        else:
-            metrics_result = None
-
         x = self._to_code_array(instance)
         proba = self._lime_predict_fn(np.array([x]))[0]
         idx_pred = np.argmax(proba)
         predicted_class = self.class_names[idx_pred]
         probability = float(proba[idx_pred])
 
-        if method == "shap":
-            raw_json = self.shap_explain(instance)
-        elif method == "lime":
-            raw_json = self.lime(instance)
-        elif method == "anchor":
-            raw_json = self.anchor(instance)
-        else:
-            raise ValueError(f"Método no soportado: {method}")
+        explanations = {}
 
-        explanation_data = json.loads(raw_json)
+        # 1. Calcular LIME (Estable)
+        try:
+            explanations["lime"] = json.loads(self.lime(instance))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error aislando LIME: {e}")
+
+        # 2. Calcular ANCHOR (Estable)
+        try:
+            explanations["anchor"] = json.loads(self.anchor(instance))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error aislando Anchor: {e}")
+
+        # 3. Calcular SHAP (Inestable por ceros absolutos, con protección)
+        try:
+            raw_shap = self.shap_explain(instance)
+            parsed_shap = json.loads(raw_shap)
+            
+            # Verificación matemática de NaNs
+            features = parsed_shap.get("features", [])
+            has_nans = any(
+                math.isnan(float(f.get("shap_value", 0))) 
+                for f in features 
+                if isinstance(f.get("shap_value"), (int, float))
+            )
+            
+            if not has_nans:
+                explanations["shap"] = parsed_shap
+            else:
+                import logging
+                logging.getLogger(__name__).warning("SHAP generó NaNs. Omitiendo del paquete.")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Error crítico en SHAP: {e}. Omitiendo del paquete.")
+
+        # Definir un método "principal" para la narrativa de texto
+        primary_method = "shap" if "shap" in explanations else ("lime" if "lime" in explanations else "anchor")
 
         return {
-            "method_used": method,
+            "method_used": primary_method,
             "prediction": str(predicted_class),
             "label": self.label_map.get(int(predicted_class), str(predicted_class)),
             "confidence": round(probability * 100, 2),
-            "explanation": explanation_data,
-            "metrics": metrics_result,
+            "explanations": explanations, # Enviamos el diccionario con los 3
+            "metrics": None, # Desactivamos métricas temporalmente para ahorrar RAM
         }
 
     # ────────────────────────────────────────────────────────────────────
