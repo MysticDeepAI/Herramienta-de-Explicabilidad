@@ -166,8 +166,8 @@ def _get_or_create_engine(job: dict, features: List[str]) -> ExplanationEngine:
 
     me = ModelExplainer(
         pipeline_path=job["model_path"],
-        background_data=df[features],
-    )
+        background_data=df[features].sample(n=70, random_state=42) if len(df) > 100 else df[features],
+    ) #Seguridad para prueba rapida, solo 70 instancias
 
     # Detectar clases y crear label_map
     if hasattr(me.model, "classes_"):
