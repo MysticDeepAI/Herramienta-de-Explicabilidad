@@ -84,6 +84,8 @@ async def start_processing():
         "kb_files": [],
         "rag_engine": None,
         "explanation_engine": None,
+        "last_instance": None, 
+        "last_result": None,  
     }
     return {"jobId": jid, "status": "ready"}
 
@@ -207,8 +209,23 @@ async def explain(payload: dict):
     features = list(instance_dict.keys())
 
     try:
-        engine = _get_or_create_engine(job, features)
-        result = engine.explain_instance(instance_dict, method=method)
+        # Verificamos si los datos del paciente/instancia son idénticos a los de la última petición
+        if job.get("last_instance") == instance_dict and job.get("last_result") is not None:
+            logger.info("Instancia repetida detectada. Reciclando cálculos XAI en caché...")
+            result = job["last_result"]
+            
+            # Si el usuario forzó un método distinto, actualizamos la etiqueta
+            if method is not None:
+                result["method_used"] = method
+        else:
+            # Si es una instancia nueva, o es la primera vez, calculamos desde cero
+            logger.info("Instancia nueva. Calculando explicaciones XAI desde cero...")
+            engine = _get_or_create_engine(job, features)
+            result = engine.explain_instance(instance_dict, method=method)
+            
+            # Guardamos los resultados en el caché del Job para la próxima vez
+            job["last_instance"] = instance_dict
+            job["last_result"] = result
 
         # ── Generar narrativa ────────────────────────────────────────────
         natural_text = ""
@@ -230,7 +247,8 @@ async def explain(payload: dict):
         # ── Formatear respuesta para el frontend ─────────────────────────
         technical = _format_technical_for_frontend(result)
 
-        return {
+        # Preparamos la respuesta final
+        response_data = {
             "prediction": result["prediction"],
             "label": result.get("label", result["prediction"]),
             "profile": profile,
@@ -239,21 +257,25 @@ async def explain(payload: dict):
             "technical": technical,
         }
 
+        # ─── LIMPIEZA DE MEMORIA FORZADA PARA RENDER ───
+        import gc
+        gc.collect()
+
+        return response_data
+
     except Exception as e:
         logger.error("Error en explain: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
 
 def _build_narrative(result: dict, profile: str) -> str:
     pred = result.get("prediction", "?")
     label = result.get("label", pred)
     conf = result.get("confidence", 0)
     method = result.get("method_used", "unknown")
-
     exps = result.get("explanations", {})
-    top_feat = "desconocida"
 
-    # Buscar la característica más importante usando el método principal que sobrevivió
+    # 1. Extraemos el top_feat (Para SHAP y LIME)
+    top_feat = "desconocida"
     if method in ("shap", "lime") and method in exps:
         feats = exps[method].get("features", [])
         if feats:
@@ -262,35 +284,62 @@ def _build_narrative(result: dict, profile: str) -> str:
             else:
                 sorted_f = sorted(feats, key=lambda f: abs(f.get("lime_weight", 0)), reverse=True)
             top_feat = sorted_f[0].get("name", "desconocida")
-    elif method == "anchor" and "anchor" in exps:
+
+    # 2. Extraemos las condiciones (Para ANCHOR)
+    condiciones = "condiciones desconocidas"
+    if method == "anchor" and "anchor" in exps:
         anchor_data = exps["anchor"].get("anchor", {})
-        conditions = anchor_data.get("conditions", [])
-        if conditions:
-            top_feat = conditions[0]
+        conds = anchor_data.get("conditions", [])
+        if conds:
+            condiciones = " Y ".join(conds)
 
     if profile == "data-scientist":
-        return (
-            f"El modelo clasificó la instancia como '{label}' (clase {pred}) "
-            f"con una confianza del {conf:.2f}% (Método principal: {method.upper()}).\n\n"
-            f"El factor determinante fue '{top_feat}', con el mayor peso en la "
-            f"decisión local. Se recomienda revisar las otras pestañas para confirmar la estabilidad."
-        )
-    elif profile == "domain-expert":
-        return (
-            f"El análisis indica que este caso corresponde a '{label}' "
-            f"(confianza: {conf:.2f}%).\n\n"
-            f"El factor más relevante fue '{top_feat}'. Desde la perspectiva del "
-            f"dominio, evalúe las reglas y pesos en las pestañas técnicas para validar la inferencia."
-        )
-    else:
-        return (
-            f"¡Hola! El sistema analizó los datos y concluye que este caso "
-            f"corresponde a '{label}'.\n\n"
-            f"La característica que más influyó fue '{top_feat}'. "
-            f"En términos sencillos: si el valor de '{top_feat}' fuera diferente, "
-            f"es muy probable que el resultado también hubiera cambiado."
-        )
+        if method == "anchor":
+            return (
+                f"El modelo clasificó la instancia como '{label}' (clase {pred}) "
+                f"usando explicaciones basadas en reglas (Método: ANCHOR).\n\n"
+                f"Se encontró que las condiciones: [{condiciones}] son suficientes para anclar la predicción. "
+                f"Revise la cobertura y precisión de esta regla en la pestaña de métricas."
+            )
+        else:
+            return (
+                f"El modelo clasificó la instancia como '{label}' (clase {pred}) "
+                f"con una confianza del {conf:.2f}% (Método: {method.upper()}).\n\n"
+                f"El factor determinante fue '{top_feat}', con la mayor contribución marginal o peso local. "
+                f"Se recomienda revisar las otras pestañas para confirmar la estabilidad de la explicación."
+            )
 
+    elif profile == "domain-expert":
+        if method == "anchor":
+            return (
+                f"El análisis indica que este caso corresponde a '{label}'.\n\n"
+                f"El sistema encontró una regla estricta: si se cumple que [{condiciones}], "
+                f"el resultado siempre será este. Valide si esta combinación de reglas coincide con los protocolos de su área."
+            )
+        else:
+            return (
+                f"El análisis indica que este caso corresponde a '{label}' "
+                f"(confianza: {conf:.2f}%).\n\n"
+                f"El factor más relevante en esta decisión fue '{top_feat}'. Desde la perspectiva del "
+                f"dominio, evalúe si el peso de esta variable tiene sentido lógico o profesional."
+            )
+
+    else: # Usuario sin contexto
+        if method == "anchor":
+            return (
+                f"¡Hola! El sistema analizó los datos y concluye que este caso "
+                f"corresponde a '{label}'.\n\n"
+                f"El sistema tomó esta decisión basándose en una regla clara. Como se cumplió que: {condiciones}, "
+                f"el modelo estuvo completamente seguro de su respuesta. Es como seguir una receta paso a paso."
+            )
+        else:
+            return (
+                f"¡Hola! El sistema analizó los datos y concluye que este caso "
+                f"corresponde a '{label}'.\n\n"
+                f"La característica que más influyó en este resultado fue '{top_feat}'. "
+                f"En términos sencillos: si el valor de '{top_feat}' fuera diferente, "
+                f"es muy probable que la decisión de la Inteligencia Artificial hubiera cambiado."
+            )
 
 def _format_technical_for_frontend(result: dict) -> dict:
     """
@@ -326,8 +375,17 @@ def _format_technical_for_frontend(result: dict) -> dict:
         ]
 
     if "anchor" in exps:
-        anchor_data = exps["anchor"].get("anchor", {})
-        technical["anchors"] = anchor_data.get("conditions", [])
+            anchor_data = exps["anchor"].get("anchor", {})
+            conditions = anchor_data.get("conditions", [])
+            
+            if conditions:
+                # Rescatamos el nombre o número de la clase que el modelo predijo
+                clase_justificada = result.get("label", result.get("prediction", "?"))
+                
+                # Agregamos un elemento visual al final de la lista de reglas
+                conditions.append(f"➔ ENTONCES LA CLASE ES: {clase_justificada}")
+                
+            technical["anchors"] = conditions
 
     # ── 2. Métricas del explanation engine (Tu código original restaurado) ──
     if metrics_data and isinstance(metrics_data, dict):
