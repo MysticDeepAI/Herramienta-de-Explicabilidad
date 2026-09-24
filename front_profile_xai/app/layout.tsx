@@ -39,7 +39,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`font-sans antialiased`}>
+      <body
+        className="font-sans antialiased"
+        style={{ background: "#FAF8F5", color: "#141414", minHeight: "100vh" }}
+      >
         {children}
         <FeedbackPanel />
         <Analytics />

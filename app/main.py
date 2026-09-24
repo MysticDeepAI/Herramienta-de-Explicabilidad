@@ -1,5 +1,5 @@
 """
-Profile XAI API — Backend v2 (intermedio).
+Herramienta de Explicabilidad API — Backend v2 (intermedio).
 
 Motor XAI completo: SHAP + LIME + Anchor + métricas + selección automática.
 RAG y Chat desactivados hasta configurar Vertex AI.
@@ -51,7 +51,7 @@ except ImportError as e:
 
 # ─── App ────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="ProfileXAI API",
+    title="Herramienta de Explicabilidad API",
     version="2.0.0",
     description="API de explicabilidad adaptativa — SHAP, LIME, Anchor + RAG + Chat",
 )
@@ -687,7 +687,7 @@ def _build_feedback_pdf(data: FeedbackRequest, out_path: Path) -> None:
     class PDF(FPDF):
         def header(self):
             self.set_font("Helvetica", "B", 13)
-            self.cell(0, 8, "ProfileXAI - Evaluacion de Usuario", align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 8, "Herramienta de Explicabilidad - Evaluacion de Usuario", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 9)
             self.cell(0, 5, "Herramienta de Explicabilidad (Piloto SUSESO)", align="C", new_x="LMARGIN", new_y="NEXT")
             self.ln(3)
@@ -699,7 +699,7 @@ def _build_feedback_pdf(data: FeedbackRequest, out_path: Path) -> None:
             self.set_y(-14)
             self.set_font("Helvetica", "I", 8)
             self.set_text_color(130, 130, 130)
-            self.cell(0, 8, f"Pagina {self.page_no()} | Generado por ProfileXAI", align="C")
+            self.cell(0, 8, f"Pagina {self.page_no()} | Generado por la Herramienta de Explicabilidad", align="C")
 
         def section_title(self, title: str):
             self.ln(3)
@@ -748,7 +748,7 @@ def _build_feedback_pdf(data: FeedbackRequest, out_path: Path) -> None:
 
     # ── Dimensión 2 ────────────────────────────────────────────────
     pdf.section_title("Dimension 2 - Satisfaccion y Confianza")
-    pdf.qa_row("Me siento satisfecho con la herramienta ProfileXAI.",
+    pdf.qa_row("Me siento satisfecho con la Herramienta de Explicabilidad.",
                LIKERT_LABELS.get(data.q2_1, str(data.q2_1)))
     pdf.qa_row("Confio en la evaluacion que hizo el sistema sobre la licencia.",
                LIKERT_LABELS.get(data.q2_2, str(data.q2_2)))
@@ -880,7 +880,7 @@ def _build_explanation_pdf(data: ExplanationReportRequest, out_path: Path) -> No
     class PDF(FPDF):
         def header(self):
             self.set_font("Helvetica", "B", 13)
-            self.cell(0, 8, "ProfileXAI - Reporte de Explicacion", align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 8, "Herramienta de Explicabilidad - Reporte", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 9)
             self.cell(0, 5, "Herramienta de Explicabilidad - Piloto SUSESO", align="C", new_x="LMARGIN", new_y="NEXT")
             self.ln(3)
@@ -892,7 +892,7 @@ def _build_explanation_pdf(data: ExplanationReportRequest, out_path: Path) -> No
             self.set_y(-14)
             self.set_font("Helvetica", "I", 8)
             self.set_text_color(130, 130, 130)
-            self.cell(0, 8, f"Pagina {self.page_no()} | Generado por ProfileXAI", align="C")
+            self.cell(0, 8, f"Pagina {self.page_no()} | Generado por la Herramienta de Explicabilidad", align="C")
 
         def section_title(self, title: str):
             self.ln(3)

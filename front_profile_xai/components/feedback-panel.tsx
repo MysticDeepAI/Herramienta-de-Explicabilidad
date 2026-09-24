@@ -292,7 +292,7 @@ export function FeedbackPanel() {
                 {/* Dimensión 2 */}
                 <SectionHeading>Dimensión 2 — Satisfacción y Confianza</SectionHeading>
                 <LikertRow
-                  label="Me siento satisfecho con la herramienta ProfileXAI."
+                  label="Me siento satisfecho con la Herramienta de Explicabilidad."
                   value={form.q2_1}
                   onChange={(v) => set("q2_1", v)}
                 />
@@ -408,7 +408,7 @@ export function FeedbackPanel() {
                     </p>
                     <p className="text-sm text-muted-foreground max-w-xs">
                       Tu feedback ha sido registrado correctamente y ayudará a mejorar
-                      la herramienta ProfileXAI.
+                      la Herramienta de Explicabilidad.
                     </p>
                     <Button
                       variant="outline"

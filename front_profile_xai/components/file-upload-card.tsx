@@ -5,7 +5,8 @@ import type React from "react"
 import { useState, useRef, type DragEvent } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Upload, X, FileIcon } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Upload, X, FileIcon, Info } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface FileUploadCardProps {
@@ -14,9 +15,10 @@ interface FileUploadCardProps {
   acceptedTypes: string
   onFilesChange: (files: File[]) => void
   files: File[]
+  tooltipInfo?: React.ReactNode
 }
 
-export function FileUploadCard({ title, description, acceptedTypes, onFilesChange, files }: FileUploadCardProps) {
+export function FileUploadCard({ title, description, acceptedTypes, onFilesChange, files, tooltipInfo }: FileUploadCardProps) {
   const [isDragging, setIsDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -51,8 +53,29 @@ export function FileUploadCard({ title, description, acceptedTypes, onFilesChang
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1 flex-1">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          {tooltipInfo && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground mt-0.5"
+                  aria-label="Más información"
+                >
+                  <Info className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent side="right" align="start" className="w-80 text-sm">
+                {tooltipInfo}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div

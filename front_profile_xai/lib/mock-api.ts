@@ -18,7 +18,7 @@ export async function downloadExplanationReport(payload: {
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
-  a.download = `reporte_profilexai_${Date.now()}.pdf`
+  a.download = `reporte_explicabilidad_${Date.now()}.pdf`
   a.click()
   URL.revokeObjectURL(url)
 }
