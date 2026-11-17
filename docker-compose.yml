@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+
+  # ── Backend principal (API FastAPI) ─────────────────────────────────────────
+  # NO tiene acceso al socket de Docker → C2 resuelto en local
+  backend:
+    build: ./app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/src/app
+      - xai_shared_data:/shared_uploads
+      - ./feedback_reports:/src/feedback_reports   # persiste PDFs en local (GCS en producción)
+      - ~/.config/gcloud:/root/.config/gcloud:ro   # credenciales ADC del host (solo lectura)
+      # /var/run/docker.sock REMOVIDO — el backend nunca habla con Docker
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - GOOGLE_CLOUD_PROJECT=project-d2a03bd2-741f-44e7-80a
+      - SHAP_NSAMPLES=100
+      - SHAP_BACKGROUND_SIZE=150
+      # En local se permite * para desarrollo; en producción setear dominios exactos
+      - CORS_ORIGINS=*
+      # API_KEY vacía en local → autenticación desactivada (desarrollo)
+      # En producción: API_KEY=<secreto generado con openssl rand -hex 32>
+      - API_KEY=
+      - JOB_MAX=50
+      - JOB_TTL_SECONDS=7200
+      # Backend local delega conversión al microservicio converter
+      - CONVERTER_BACKEND=docker
+      - CONVERTER_URL=http://converter:8001
+    depends_on:
+      converter:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ── Microservicio converter ──────────────────────────────────────────────────
+  # ÚNICO contenedor con acceso al socket de Docker
+  # NO expuesto al exterior (sin ports públicos)
+  # Solo accesible desde la red interna de Docker
+  converter:
+    build:
+      context: .
+      dockerfile: converter/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - xai_shared_data:/shared_uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Sin "ports": no accesible desde el host ni desde internet
+    networks:
+      - internal
+
+  # ── Frontend Next.js ────────────────────────────────────────────────────────
+  frontend:
+    build: ./front_profile_xai
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./front_profile_xai:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    networks:
+      - internal
+
+volumes:
+  xai_shared_data:
+    name: xai_shared_data
+
+networks:
+  internal:
+    driver: bridge

@@ -1,0 +1,31 @@
+Perfil del Conocimiento: El Conjunto de Datos Iris de R.A. Fisher (1936)1. Contexto Histórico y ObjetivoOrigen: Este documento fue escrito por R.A. Fisher en 1936 para ilustrar el uso de funciones discriminantes en problemas de taxonomía de plantas.Problema Taxonómico: El objetivo principal es encontrar una función lineal de mediciones botánicas que permita distinguir mejor entre diferentes poblaciones de flores.Especies Estudiadas: El estudio utiliza datos de tres especies: Iris setosa, Iris versicolor e Iris virginica.2. Mediciones y Variables (Features)Variables del Dataset: Se utilizan cuatro mediciones fundamentales de la flor: longitud del sépalo ($x_1$), ancho del sépalo ($x_2$), longitud del pétalo ($x_3$) y ancho del pétalo ($x_4$).Recolección de Datos: Cada muestra consta de 50 plantas por especie, medidas originalmente por el Dr. E. Anderson.Valores Promedio (Medias):Iris versicolor tiende a tener sépalos más largos (5.936 cm) y pétalos mucho más largos (4.260 cm) en comparación con Iris setosa.Iris setosa se caracteriza por tener sépalos más anchos (3.428 cm) y pétalos muy pequeños (1.462 cm).3. Fundamentos de la Predicción (XAI Context)Función Discriminante: Fisher propone una fórmula lineal: $X = \lambda_1x_1 + \lambda_2x_2 + \lambda_3x_3 + \lambda_4x_4$.Criterio de Optimización: El modelo busca maximizar la relación entre la diferencia de las medias de las especies y las desviaciones estándar dentro de las especies.Ecuación Específica (Setosa vs. Versicolor): La función óptima hallada por Fisher es $X = x_1 + 5.9037x_2 - 7.1299x_3 - 10.1036x_4$.Precisión: Utilizando esta combinación de medidas, la probabilidad de clasificar erróneamente una planta es menor a tres por cada millón.4. Contexto Biológico y GenéticoTeoría de Poliploidía: Se sugiere que I. versicolor es un híbrido poliploide de las otras dos especies.Cromosomas: I. setosa es una especie "diploide" con 38 cromosomas, mientras que I. virginica es "tetraploide" con 70 cromosomas.Naturaleza Intermedia: Las mediciones de I. versicolor (hexaploide) son notablemente intermedias entre las de I. setosa e I. virginica, siguiendo una proporción aproximada de 2:1 en sus diferencias.1. SHAP (SHapley Additive exPlanations)
+
+Definición: Basado en la teoría de juegos cooperativos, SHAP asigna a cada característica un valor de importancia para una predicción específica.
+
+Interpretación: Un valor SHAP positivo indica que esa variable aumentó la probabilidad de la clase predicha; un valor negativo indica que la disminuyó.
+
+Suma de Atribuciones: La suma de todos los valores SHAP más el valor base (promedio) es igual a la salida exacta del modelo. Esto garantiza una explicación "exacta" a nivel global y local.
+
+2. LIME (Local Interpretable Model-agnostic Explanations)
+
+Definición: LIME entrena un modelo lineal simple (como una regresión) alrededor de la instancia que queremos explicar.
+
+Funcionamiento: Genera datos nuevos "perturbando" el ejemplo original para ver cómo cambia la predicción del modelo complejo.
+
+Uso ideal: Es excelente para entender el comportamiento del modelo en un "vecindario" específico, aunque no sea tan preciso globalmente como SHAP.
+
+3. Métricas de Evaluación de Explicabilidad
+
+Infidelity (Infidelidad): Mide qué tan bien la explicación sigue las predicciones del modelo original cuando se realizan pequeños cambios en la entrada. Valores cercanos a 0 son ideales.
+
+Lipschitz Estimate (Estabilidad): Mide la consistencia de las explicaciones. Si dos pacientes son casi iguales, sus explicaciones deberían ser casi iguales. Un valor bajo indica una explicación robusta.
+
+Effective Complexity (Complejidad): Indica cuántas características se necesitan realmente para explicar la decisión. Menos es mejor para la interpretación humana.
+
+4. Guía de Interpretación para el Usuario
+
+Data Scientist: Debe fijarse en la Infidelity y los valores cuantitativos de SHAP para validar la arquitectura del modelo.
+
+Experto de Dominio: Debe validar si las variables con mayor peso (top features) coinciden con el conocimiento profesional o médico.
+
+Usuario No Experto: Debe centrarse en la narrativa de "quién ganó el tira y afloja" (las variables que más empujaron la decisión).

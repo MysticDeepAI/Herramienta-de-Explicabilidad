@@ -13,8 +13,9 @@ services:
         value: "3.11.9"
       - key: UPLOAD_DIR
         value: /tmp/uploads
-      - key: CORS_ORIGIN
-        value: "*"
+      # Dominios permitidos separados por coma — NUNCA usar "*" en producción
+      - key: CORS_ORIGINS
+        sync: false       # configurar manualmente: https://tudominio.com,https://www.tudominio.com
       - key: GCP_PROJECT_ID
         sync: false       # se configura manualmente en el dashboard de Render
       - key: GCP_LOCATION
@@ -25,3 +26,18 @@ services:
         value: "gemini-2.5-flash"
       - key: GOOGLE_APPLICATION_CREDENTIALS
         sync: false       # ruta al JSON de Service Account (si aplica)
+      # ── Conversión de modelos ──────────────────────────────────────────────
+      # En Render no hay Docker disponible; usar cloudbuild o subir solo .onnx
+      - key: CONVERTER_BACKEND
+        value: "cloudbuild"
+      - key: CONVERTER_URL
+        value: ""         # no aplica con CONVERTER_BACKEND=cloudbuild
+      - key: GCS_BUCKET
+        sync: false       # nombre del bucket GCS para archivos temporales de conversión
+      # ── Autenticación ──────────────────────────────────────────────────────
+      - key: API_KEY
+        sync: false       # secreto compartido entre frontend y backend — generar con: openssl rand -hex 32
+      - key: JOB_MAX
+        value: "50"
+      - key: JOB_TTL_SECONDS
+        value: "7200"

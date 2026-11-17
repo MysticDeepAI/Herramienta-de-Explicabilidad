@@ -1,0 +1,40 @@
+# Sandbox de conversión — soporta sklearn puro, LightGBM puro y sklearn+LGB
+FROM python:3.10-slim
+
+ARG FRAMEWORK=sklearn
+ARG SKLEARN_VERSION=""
+ARG LGB_VERSION_SPEC=""
+
+WORKDIR /workspace
+
+# Compiladores necesarios para extensiones nativas
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Dependencias base comunes a todos los frameworks
+RUN pip install --no-cache-dir \
+    joblib \
+    pandas \
+    "numpy<2.0.0" \
+    "onnx>=1.14" \
+    "protobuf>=3.20,<5" \
+    packaging
+
+# sklearn + skl2onnx  (para modelos puros sklearn o pipelines sklearn+LGB)
+RUN if [ "$FRAMEWORK" != "lgb" ] && [ -n "$SKLEARN_VERSION" ]; then \
+      pip install --no-cache-dir \
+        "scikit-learn==${SKLEARN_VERSION}" \
+        "skl2onnx>=1.16"; \
+    fi
+
+# LightGBM + onnxmltools  (para modelos LGB puros o pipelines sklearn+LGB)
+RUN if [ "$FRAMEWORK" != "sklearn" ] && [ -n "$LGB_VERSION_SPEC" ]; then \
+      pip install --no-cache-dir \
+        "lightgbm${LGB_VERSION_SPEC}" \
+        "onnxmltools>=1.12"; \
+    fi
+
+COPY conver.py /workspace/conver.py
+
+ENTRYPOINT ["python", "/workspace/conver.py"]

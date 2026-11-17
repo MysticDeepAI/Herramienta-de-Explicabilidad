@@ -1,0 +1,485 @@
+=========================================================
+BASE DE CONOCIMIENTO — MODELO PREDICTIVO DE DICTÁMENES
+Sistema de Reclamaciones de Licencias Médicas (SUSESO)
+Proyecto: Análisis y Desarrollo del Modelo Predictivo de Licencias Médicas
+Licitación: 1607-28-LE23 — Informe Final Hito 3 (Diciembre 2024)
+=========================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. CONTEXTO INSTITUCIONAL Y PROBLEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+La Superintendencia de Seguridad Social (SUSESO) es el organismo regulador
+del sistema de previsión social en Chile. Entre sus funciones está la
+resolución de reclamaciones de licencias médicas presentadas por trabajadores
+que consideran que su licencia fue rechazada injustamente por las Isapres o
+COMPIN.
+
+La SUSESO recibe aproximadamente 150.000 reclamaciones de licencias médicas
+al año, con un crecimiento anual del 10%. El tiempo promedio de resolución
+es de 40 días, lo que genera una carga significativa para los equipos de
+profesionales de salud.
+
+El objetivo del proyecto es predecir si el dictamen (resolución final) de
+una reclamación de licencia médica debe ser ACOGIDA (aceptada) o NO ACOGIDA
+(rechazada), usando características del caso disponibles en el momento del
+ingreso al sistema.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. DESCRIPCIÓN DEL MODELO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Nombre: Modelo de Dictámenes
+Algoritmo: LightGBM (Light Gradient Boosting Machine)
+Tipo: Clasificación binaria
+Preprocesamiento: Pipeline sklearn con TargetEncoder para variables categóricas
+
+El modelo forma parte de un sistema de tres modelos secuenciales:
+  1. Modelo de Admisibilidad: ¿Es admisible la reclamación?
+  2. Modelo de Pronunciabilidad: ¿Se puede emitir un dictamen?
+  3. Modelo de Dictámenes: ¿Se debe acoger o no acoger la reclamación?
+     (Este es el modelo documentado en esta base de conocimiento)
+
+El modelo de dictámenes solo se aplica a casos que han pasado los filtros
+de admisibilidad y pronunciabilidad.
+
+Explicabilidad: Se usan valores SHAP (SHapley Additive exPlanations)
+para explicar qué variables y en qué dirección influyeron en cada predicción
+individual.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. VARIABLE OBJETIVO (TARGET) — LO QUE PREDICE EL MODELO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+La variable objetivo representa el dictamen final que el profesional de
+la SUSESO emite sobre una reclamación de licencia médica.
+
+  Clase 0 — NO ACOGE:
+    El dictamen rechaza la reclamación. La SUSESO resuelve que el rechazo
+    original de la licencia médica fue correcto y no hay mérito suficiente
+    para revertirlo. El trabajador no obtiene el beneficio solicitado.
+
+  Clase 1 — ACOGE:
+    El dictamen acepta la reclamación. La SUSESO resuelve que el rechazo
+    original de la licencia médica fue incorrecto. El trabajador tiene
+    derecho al pago de la licencia y/o a los días de reposo solicitados.
+
+El modelo predice la PROBABILIDAD de que una reclamación sea ACOGIDA (clase 1).
+Una probabilidad alta (cercana a 1.0) indica mayor riesgo de acogida.
+Una probabilidad baja (cercana a 0.0) indica mayor probabilidad de no acogida.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. VARIABLES DE ENTRADA (CARACTERÍSTICAS DEL MODELO)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El modelo utiliza 12 variables para generar su predicción:
+
+───────────────────────────────────────────────────────
+4.1. causa_rechazo
+Tipo: Categórica
+Descripción: Motivo por el cual fue rechazada la licencia médica originalmente
+por la Isapre o COMPIN. Es la justificación formal del rechazo.
+
+Valores posibles:
+  - Diagnostico_No_Acredita_Incapacidad: El diagnóstico informado no
+    justifica una incapacidad laboral. El médico de la entidad considera
+    que el paciente puede trabajar con esa condición.
+  - Reposo_Injustificado: Los días de reposo solicitados no están
+    justificados por la gravedad del diagnóstico o la evolución clínica.
+  - Falta_Antecedentes: La licencia fue rechazada porque faltan documentos
+    o antecedentes médicos para evaluarla correctamente.
+  - Incumplimiento_Reposo: El trabajador no cumplió con las indicaciones
+    de reposo prescritas, lo que motivó el rechazo.
+  - BAJA_FRECUENCIA: Agrupa causas de rechazo que aparecen con poca
+    frecuencia en los datos de entrenamiento.
+
+Importancia: Esta es una de las variables más influyentes en la predicción.
+Una causa de rechazo de tipo "Diagnostico_No_Acredita_Incapacidad" tiende
+a asociarse fuertemente con dictámenes de No Acoge.
+
+───────────────────────────────────────────────────────
+4.2. patologia
+Tipo: Categórica
+Descripción: Clasificación del tipo de patología asociada a la licencia médica.
+Indica el sistema o área médica que justifica el reposo.
+
+Valores posibles:
+  - Psiquiatrica: Condiciones de salud mental (depresión, ansiedad,
+    trastornos del ánimo, estrés, etc.). Es el tipo de patología más
+    frecuente en las reclamaciones de licencias médicas.
+  - Medica_General: Enfermedades de medicina general, como condiciones
+    crónicas (diabetes, hipertensión), infecciones u otras patologías
+    de medicina interna.
+  - Traumatologica: Lesiones musculoesqueléticas, fracturas, esguinces,
+    hernias o condiciones del aparato locomotor.
+
+Importancia: Alta. Las licencias psiquiátricas presentan dinámicas
+distintas a las traumatológicas o de medicina general en cuanto a la
+probabilidad de acogida.
+
+───────────────────────────────────────────────────────
+4.3. cod_diagnostico
+Tipo: Categórica
+Descripción: Código CIE-10 (Clasificación Internacional de Enfermedades,
+10ª revisión) del diagnóstico principal de la licencia médica. Identifica
+con precisión la enfermedad o condición de salud.
+
+Ejemplos de códigos frecuentes:
+  - F32: Episodio depresivo
+  - F41: Otros trastornos de ansiedad
+  - F43: Reacciones ante el estrés grave y trastornos de adaptación
+  - E11: Diabetes mellitus tipo 2
+  - S93: Esguinces y torceduras del tobillo y del pie
+  - M75: Lesiones del hombro
+
+Nota: Los códigos poco frecuentes se agrupan bajo el valor "BAJA_FRECUENCIA"
+para el funcionamiento del modelo.
+
+Importancia: Alta. El código diagnóstico específico determina la naturaleza
+clínica del caso y si la duración del reposo solicitado es coherente con
+el diagnóstico.
+
+───────────────────────────────────────────────────────
+4.4. especialidades_medico
+Tipo: Categórica
+Descripción: Especialidad médica del profesional que emitió la licencia
+original. Indica quién indicó el reposo al trabajador.
+
+Valores posibles:
+  - Medicina_General: Médico general o de atención primaria
+  - Psiquiatra: Especialista en salud mental y psiquiatría
+  - Traumatologo: Especialista en lesiones y enfermedades del sistema
+    musculoesquelético
+  - Otras especialidades
+
+Importancia: Permite evaluar si la especialidad del médico emisor es
+coherente con el diagnóstico informado. Una licencia psiquiátrica emitida
+por un médico general puede tener diferentes tasas de acogida que una
+emitida por un psiquiatra.
+
+───────────────────────────────────────────────────────
+4.5. departamento_cierre
+Tipo: Categórica
+Descripción: Departamento o unidad de la SUSESO encargado de resolver
+(cerrar) el caso. Refleja la complejidad del caso y el área especializada
+que debe emitir el dictamen.
+
+Valores posibles:
+  - Dpto_Psiquiatria: Departamento especializado en salud mental.
+    Resuelve casos con diagnósticos psiquiátricos complejos.
+  - Comision_Medica: Comisión médica interdisciplinaria para casos
+    que requieren evaluación de múltiples especialidades.
+  - Dpto_Medicina_Interna: Departamento de medicina interna para
+    condiciones crónicas o sistémicas.
+  - Dpto_Medicina_Fisica: Departamento de medicina física y rehabilitación,
+    frecuente en casos traumatológicos.
+  - Unidad_Resolucion_Abreviada: Unidad que resuelve casos de menor
+    complejidad de manera más expedita.
+  - Unidad_Medica: Unidad médica general.
+
+Nota: Esta variable se imputa en producción cuando no está disponible,
+basándose en la complejidad del caso. Esto puede afectar la precisión
+del modelo en algunos tramos de score.
+
+Importancia: Alta. El departamento asignado refleja la complejidad y
+tipo clínico del caso, lo que se correlaciona con el dictamen final.
+
+───────────────────────────────────────────────────────
+4.6. cant_instrumentos
+Tipo: Numérica entera
+Descripción: Cantidad de instrumentos (licencias médicas) incluidos en
+la reclamación. Una reclamación puede agrupar una o más licencias médicas.
+
+Interpretación:
+  - Valor 1: Reclamo por una sola licencia médica
+  - Valores > 1: El trabajador reclama varias licencias médicas a la vez,
+    lo que puede indicar una situación clínica prolongada o recurrente.
+
+Importancia: Alta. Un mayor número de instrumentos puede estar asociado
+a patrones de reclamación más complejos.
+
+───────────────────────────────────────────────────────
+4.7. TotalLicReclamadas_U365D
+Tipo: Numérica entera
+Descripción: Total de licencias médicas reclamadas por el mismo trabajador
+ante la SUSESO en los últimos 365 días (1 año) antes de la fecha de
+la reclamación actual.
+
+Interpretación:
+  - Valor bajo (0-2): Trabajador con pocos antecedentes de reclamaciones
+  - Valor alto (>5): Trabajador que ha reclamado frecuentemente en el último año,
+    lo que puede indicar una condición crónica o un patrón de uso del sistema.
+
+Importancia: Permite evaluar el historial reciente del trabajador dentro
+del sistema de reclamaciones de la SUSESO.
+
+───────────────────────────────────────────────────────
+4.8. CantidadReclamosPsiquiatrica_U365D
+Tipo: Numérica entera
+Descripción: Cantidad de reclamaciones por patología psiquiátrica que
+ha realizado el mismo trabajador en los últimos 365 días.
+
+Interpretación:
+  - Valor 0: Sin antecedentes psiquiátricos recientes en reclamaciones
+  - Valor > 0: El trabajador tiene historial de reclamaciones por
+    patologías de salud mental en el último año
+
+Importancia: Permite identificar trabajadores con condiciones de salud
+mental recurrentes. Un historial psiquiátrico previo puede influir en
+la probabilidad de acogida del dictamen actual.
+
+───────────────────────────────────────────────────────
+4.9. is_folio_caso_reconsiderado
+Tipo: Binaria (0 o 1)
+Descripción: Indica si la reclamación actual es una reconsideración de
+un caso anterior (una segunda instancia de reclamo).
+
+Valores:
+  - 0: Reclamo original (primera instancia)
+  - 1: Reconsideración (el trabajador ya reclamó antes por este caso
+    y está impugnando nuevamente)
+
+Importancia: Una reconsideración implica que ya existió una resolución
+previa. Este factor puede influir significativamente en el dictamen final,
+ya que el caso fue evaluado previamente.
+
+───────────────────────────────────────────────────────
+4.10. ratioDictamenNoAcoge_U90D
+Tipo: Numérica decimal (0.0 a 1.0)
+Descripción: Proporción (ratio) de dictámenes "No Acoge" que ha recibido
+el mismo trabajador en los últimos 90 días (3 meses), sobre el total de
+dictámenes emitidos en ese periodo.
+
+Interpretación:
+  - Valor 0.0: Todos los dictámenes recientes fueron acogidos (o no hay
+    historial en los últimos 90 días)
+  - Valor 0.5: El 50% de los dictámenes recientes fueron No Acoge
+  - Valor 1.0: Todos los dictámenes recientes fueron No Acoge
+
+Importancia: Captura la tendencia reciente de los dictámenes del trabajador.
+Un ratio alto de No Acoge en 90 días sugiere que el sistema ha resuelto
+en contra del trabajador en casos recientes.
+
+───────────────────────────────────────────────────────
+4.11. ratioDictamenNoAcoge_U365D
+Tipo: Numérica decimal (0.0 a 1.0)
+Descripción: Proporción de dictámenes "No Acoge" recibidos por el mismo
+trabajador en los últimos 365 días (1 año), sobre el total de dictámenes
+emitidos en ese periodo.
+
+Interpretación:
+  - Similar a ratioDictamenNoAcoge_U90D pero con una ventana temporal
+    más amplia (anual vs. trimestral)
+  - Captura tendencias de largo plazo en lugar de solo el comportamiento
+    reciente
+
+Importancia: Complementa al ratio de 90 días. Un trabajador con ratio
+alto en 365 días tiene historial consolidado de reclamaciones no acogidas.
+La diferencia entre ambos ratios puede revelar cambios de tendencia.
+
+───────────────────────────────────────────────────────
+4.12. TotalLicCodF_U365D
+Tipo: Numérica entera
+Descripción: Total de licencias médicas con diagnóstico de código CIE-10
+tipo "F" (trastornos mentales y del comportamiento) que el trabajador
+ha reclamado en los últimos 365 días.
+
+Interpretación:
+  - Los códigos F (F00-F99) corresponden a la categoría de trastornos
+    mentales y del comportamiento según la CIE-10: depresión (F32-F33),
+    ansiedad (F40-F41), trastornos por estrés (F43), entre otros.
+  - Valor 0: Sin licencias psiquiátricas reclamadas en el último año
+  - Valor alto (>4): Trabajador con múltiples licencias psiquiátricas
+    reclamadas en el período anual
+
+Importancia: Indica la carga de licencias psiquiátricas en el historial
+reciente del trabajador. Se relaciona con TotalLicReclamadas_U365D y
+CantidadReclamosPsiquiatrica_U365D para completar el perfil clínico.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. VARIABLES DE SALIDA DEL MODELO (NO SON ENTRADAS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Estas variables son generadas por el modelo, no son inputs:
+
+  PRED: Predicción binaria del modelo.
+    - 0 = el modelo predice No Acoge
+    - 1 = el modelo predice Acoge
+
+  PROB: Probabilidad de acogida (clase 1), valor entre 0.0 y 1.0.
+    Una probabilidad de 0.80 significa que el modelo estima un 80% de
+    probabilidad de que el dictamen sea Acoge.
+
+  TRAMO_full: Segmento de probabilidad en formato de intervalo.
+    Ejemplo: "(0.8, 0.9]" indica que la probabilidad está entre 0.8 y 0.9.
+    Los tramos van del 0 al 9, donde 0 es el de menor riesgo de acogida
+    y 9 el de mayor riesgo.
+
+  TRAMO: Número entero del 0 al 9 que identifica el tramo de score.
+    Tramo 0: probabilidad más baja (caso muy probable de No Acoge)
+    Tramo 9: probabilidad más alta (caso muy probable de Acoge)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. CÓMO INTERPRETAR LAS EXPLICACIONES (SHAP / LIME)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El sistema de explicabilidad muestra qué variables impulsaron la predicción
+hacia "Acoge" o "No Acoge" para un caso específico.
+
+VALORES POSITIVOS: La variable empujó la predicción hacia ACOGE (clase 1).
+  Ejemplo: si causa_rechazo tiene un valor SHAP positivo alto, significa
+  que la causa de rechazo de ese caso hace más probable que el dictamen
+  sea acogido.
+
+VALORES NEGATIVOS: La variable empujó la predicción hacia NO ACOGE (clase 0).
+  Ejemplo: si is_folio_caso_reconsiderado tiene un valor SHAP muy negativo,
+  significa que el hecho de ser una reconsideración reduce la probabilidad
+  de acogida.
+
+La IMPORTANCIA (shap_values_importance) indica qué porcentaje del total
+de la explicación aporta cada variable (suma = 1.0 o 100%).
+
+Variables con mayor importancia relativa típica (según datos del sistema):
+  1. causa_rechazo (~40%): La causa de rechazo es el factor más determinante
+  2. patologia (~8-10%): El tipo de patología tiene peso relevante
+  3. departamento_cierre (~15-20%): El área que resolverá el caso
+  4. cant_instrumentos (~15%): Cantidad de licencias en la reclamación
+  5. cod_diagnostico (~10%): El código diagnóstico específico
+  6. CantidadReclamosPsiquiatrica_U365D (~5%): Historial psiquiátrico
+  7. TotalLicReclamadas_U365D: Historial total de reclamaciones
+  8. ratioDictamenNoAcoge_U90D / U365D: Tendencia histórica de dictámenes
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. FLUJO COMPLETO DE UN CASO EN EL SISTEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. El trabajador interpone una reclamación por el rechazo de su licencia médica.
+2. El sistema PAE (Procedimiento Administrativo Electrónico) registra el caso.
+3. El modelo de Admisibilidad evalúa si el caso puede ser procesado.
+4. El modelo de Pronunciabilidad evalúa si es posible emitir un dictamen.
+5. El modelo de Dictámenes predice si el dictamen debe ser Acoge o No Acoge.
+6. Se genera un score de probabilidad y un tramo (0-9).
+7. Se calculan valores SHAP para explicar qué factores determinaron el resultado.
+8. El profesional de la SUSESO usa esta información como apoyo para su resolución.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. CONSIDERACIONES IMPORTANTES PARA LA INTERPRETACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. HERRAMIENTA DE APOYO, NO DECISIÓN AUTOMÁTICA:
+   El modelo es un sistema de apoyo a la decisión. El dictamen final lo
+   emite siempre un profesional de la SUSESO. El modelo proporciona una
+   estimación probabilística para orientar la revisión del caso.
+
+2. VARIABLES CON VENTANA TEMPORAL:
+   Las variables con sufijo "_U90D" y "_U365D" son ventanas temporales de
+   90 y 365 días respectivamente, calculadas hacia atrás desde la fecha
+   del reclamo actual. Capturan el comportamiento histórico del trabajador.
+
+3. CODIFICACIÓN DE VARIABLES CATEGÓRICAS:
+   Las variables categóricas (causa_rechazo, patologia, etc.) son
+   transformadas internamente con TargetEncoder antes de entrar al modelo
+   LightGBM. Los valores originales que se muestran en las explicaciones
+   corresponden a los valores reales antes de la transformación.
+
+4. BAJA_FRECUENCIA:
+   Categorías que aparecen con poca frecuencia en los datos de entrenamiento
+   son agrupadas bajo la etiqueta "BAJA_FRECUENCIA" para evitar sobreajuste.
+
+5. IMPUTACIÓN DE departamento_cierre:
+   En producción, cuando el departamento de cierre no está disponible,
+   se imputa con base en la complejidad del caso. Esto puede introducir
+   cierta variabilidad en los tramos de score bajo (tramo 0).
+
+6. CICLO DE VIDA DEL RECLAMO:
+   Los casos más recientes pueden tener tasas de No Acoge diferentes a
+   los históricos porque el proceso administrativo toma tiempo en completarse.
+   Los datos de los últimos meses tienden a mostrar una tasa de No Acoge
+   más baja que la histórica por este efecto de ciclo de vida.
+
+7. MODELO REENTRENADO PERIÓDICAMENTE:
+   El modelo se reentrena periódicamente (versión identificada por año-mes,
+   ej: "dictamenes_202408"). Esto asegura que captura los patrones más
+   recientes del sistema de reclamaciones.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. GLOSARIO DE TÉRMINOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SUSESO: Superintendencia de Seguridad Social. Organismo público chileno
+  que regula y fiscaliza el sistema de previsión social.
+
+Licencia Médica: Documento emitido por un médico que acredita la incapacidad
+  temporal de un trabajador para desempeñar sus labores, justificando
+  un período de reposo con goce de remuneraciones.
+
+Dictamen: Resolución oficial de la SUSESO sobre una reclamación de licencia
+  médica. Puede ser "Acoge" (favorable al trabajador) o "No Acoge"
+  (mantiene el rechazo original).
+
+Acoge: El dictamen acepta la reclamación. La licencia debe pagarse y el
+  trabajador tiene derecho al reposo solicitado.
+
+No Acoge: El dictamen rechaza la reclamación. Se confirma que el rechazo
+  original de la licencia fue correcto.
+
+Reclamación: Impugnación formal que interpone un trabajador ante la SUSESO
+  cuando su licencia médica fue rechazada por una Isapre o COMPIN.
+
+Reconsideración: Segunda instancia de reclamación. El trabajador impugna
+  una resolución previa de la SUSESO.
+
+Isapre: Institución de Salud Previsional. Aseguradora privada de salud
+  en Chile que puede rechazar licencias médicas.
+
+COMPIN: Comisión Médica Preventiva e Invalidez. Organismo público del
+  Ministerio de Salud que evalúa licencias médicas de trabajadores del
+  sistema público (Fonasa).
+
+PAE: Procedimiento Administrativo Electrónico. Sistema informático de la
+  SUSESO que gestiona el flujo de reclamaciones.
+
+CIE-10: Clasificación Internacional de Enfermedades, 10ª revisión.
+  Sistema estándar de códigos diagnósticos usado a nivel mundial.
+
+SHAP: SHapley Additive exPlanations. Método matemático para explicar
+  la contribución de cada variable a una predicción individual del modelo.
+
+LightGBM: Algoritmo de Machine Learning basado en árboles de decisión
+  con boosting de gradiente. Es el algoritmo de aprendizaje automático
+  utilizado en el modelo de dictámenes.
+
+TargetEncoder: Técnica de preprocesamiento que transforma variables
+  categóricas en numéricas usando la tasa media del objetivo (TARGET)
+  para cada categoría.
+
+Score / Probabilidad: Valor entre 0 y 1 que representa la estimación del
+  modelo sobre la probabilidad de que el dictamen sea Acoge (clase 1).
+
+Tramo: Segmento de probabilidad del 0 al 9. Tramo 0 = baja probabilidad
+  de Acoge; Tramo 9 = alta probabilidad de Acoge.
+
+PSI: Population Stability Index. Indicador de estabilidad del modelo
+  que mide si la distribución de los datos de producción se mantiene
+  similar a la distribución de los datos de entrenamiento.
+
+AUC: Área Bajo la Curva ROC. Métrica de desempeño del modelo. Un AUC
+  cercano a 1.0 indica alta capacidad discriminativa.
+
+KS: Kolmogorov-Smirnov. Estadístico que mide la separación máxima entre
+  la distribución de casos Acoge y No Acoge. Mayor KS = mejor discriminación.
+
+
+=========================================================
+Fuente: Informe Final de Implementación — SUSESO Proyecto 1607-28-LE23
+Desarrollado por X-Consulting para la SUSESO (Diciembre 2024)
+=========================================================

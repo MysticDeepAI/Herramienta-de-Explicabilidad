@@ -7,12 +7,19 @@ from __future__ import annotations
 
 import joblib
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
+
+# Activar SafeUnpickler antes de cualquier joblib.load() en este módulo
+from app.security import patch_safe_loader as _patch
+_patch()
 
 import numpy as np
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
+import onnxruntime as rt
+
+import logging
 
 class ModelExplainer:
     """
@@ -110,3 +117,83 @@ class ModelExplainer:
             return np.array(x_raw).flatten()
         arr = np.array(x_raw).reshape(1, -1)
         return self.preprocessor.transform(arr)[0]
+
+
+logger = logging.getLogger(__name__)
+
+class AgnosticModelExplainer:
+    """
+    Explainer especializado en modelos ONNX (Caja Negra).
+    Diseñado para ser 100% agnóstico y compatible con métodos MAIM.
+    """
+    def __init__(self, model_path: str, background_data: pd.DataFrame = None):
+        self.model_path = model_path
+        self.background_data = background_data
+        self.X_background = background_data # Candado abierto para ExplanationEngine
+        
+        try:
+            self.session = rt.InferenceSession(model_path)
+            self.onnx_inputs = self.session.get_inputs() # Extraemos TODOS los tubos de entrada
+            logger.info(f"Sesión ONNX iniciada con éxito. Detectados {len(self.onnx_inputs)} inputs.")
+        except Exception as e:
+            logger.error(f"Error al cargar el motor ONNX: {e}")
+            raise
+
+        self.classes_ = [0, 1]  
+        self.model = self  
+
+        try:
+            # Hacemos una predicción "fantasma" con la primera fila de datos
+            dummy_out = self.predict_fn(self.X_background.iloc[[0]])
+            
+            # Si devuelve probabilidades, contamos cuántas columnas (clases) hay
+            if len(dummy_out.shape) > 1:
+                num_classes = dummy_out.shape[1]
+                self.classes_ = list(range(num_classes))
+            else:
+                self.classes_ = [0, 1] # Fallback estándar
+        except Exception as e:
+            logger.warning(f"No se pudo inferir clases: {e}. Usando fallback.")
+            self.classes_ = [0, 1, 2]
+
+    def predict_fn(self, X: Any) -> np.ndarray:
+        # 1. Forzamos a que sea un DataFrame para no perder los tipos de datos originales
+        if not isinstance(X, pd.DataFrame):
+            X = pd.DataFrame(X)
+
+        feed_dict = {}
+
+        # 2. LÓGICA DE ALIMENTACIÓN QUIRÚRGICA
+        if len(self.onnx_inputs) == 1:
+            # Si solo hay un tubo (modelos antiguos numéricos)
+            X_data = X.values.astype(np.float32)
+            if len(X_data.shape) == 1:
+                X_data = X_data.reshape(1, -1)
+            feed_dict[self.onnx_inputs[0].name] = X_data
+        else:
+            # Si hay múltiples tubos (Pipelines mixtos con texto)
+            for i, inp in enumerate(self.onnx_inputs):
+                # Extraemos la columna sin alterar su tipo original
+                col_data = X.iloc[:, i].values.reshape(-1, 1)
+                
+                # Leemos qué pide ONNX y hacemos cast seguro
+                if 'string' in inp.type:
+                    feed_dict[inp.name] = col_data.astype(str)
+                elif 'int64' in inp.type:
+                    feed_dict[inp.name] = col_data.astype(np.int64)
+                else:
+                    feed_dict[inp.name] = col_data.astype(np.float32)
+
+        # 3. Inferencia
+        outputs = self.session.run(None, feed_dict)
+        
+        if len(outputs) > 1 and isinstance(outputs[1], (list, np.ndarray, dict)):
+            probas = outputs[1]
+            if isinstance(probas, list): 
+                return np.array([[d[k] for k in sorted(d.keys())] for d in probas])
+            return probas
+        
+        return outputs[0]
+
+    def predict_proba(self, X):
+        return self.predict_fn(X)

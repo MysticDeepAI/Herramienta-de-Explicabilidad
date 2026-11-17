@@ -17,7 +17,7 @@ import shap
 from anchor.anchor_tabular import AnchorTabularExplainer
 from lime.lime_tabular import LimeTabularExplainer
 
-from app.modeling import ModelExplainer
+from app.modeling import ModelExplainer, AgnosticModelExplainer
 
 # ── Compatibilidad sklearn ───────────────────────────────────────────────
 try:
@@ -41,9 +41,10 @@ class ExplanationEngine:
         label_map: Dict[int, str],
         mode: str = "classification",
     ):
-        if not isinstance(model_explainer, ModelExplainer):
-            raise TypeError("model_explainer debe ser instancia de ModelExplainer")
-
+# Ahora aceptamos tanto el motor nativo como el agnóstico
+        if not isinstance(model_explainer, (ModelExplainer, AgnosticModelExplainer)):
+            raise TypeError("model_explainer debe ser ModelExplainer o AgnosticModelExplainer")
+        
         self.me = model_explainer
         self.target = target_name
         self.label_map = label_map
@@ -83,17 +84,16 @@ class ExplanationEngine:
         self.preproc = self.me.preprocessor if hasattr(self.me, "preprocessor") else None
 
     def _setup_anchor(self) -> None:
-        encoder = None
-        if self.preproc is not None:
-            encoder = lambda X: self.preproc.transform(
-                pd.DataFrame(X, columns=self.feature_names)
-            )
+        # No encoder_fn: Anchor defaults to identity, so classifier_fn receives
+        # the integer-coded array directly. _lime_predict_fn handles the
+        # decoding (codes → original strings) before calling the sklearn Pipeline.
+        # Passing preproc.transform as encoder_fn fails because OrdinalEncoder
+        # fitted on strings raises "isnan not supported" when given integer codes.
         self.anchor_explainer = AnchorTabularExplainer(
             class_names=self.class_names,
             feature_names=self.feature_names,
             train_data=self.train_data,
             categorical_names=self.cat_names,
-            **({"encoder_fn": encoder} if encoder else {}),
         )
 
     def _setup_lime(self) -> None:
@@ -185,7 +185,7 @@ class ExplanationEngine:
 
         exp = self.anchor_explainer.explain_instance(
             x,
-            lambda z: self.me.model.predict_proba(z)[:, idx_pred],
+            lambda z: np.argmax(self._lime_predict_fn(z), axis=1),
             threshold=threshold, delta=delta, batch_size=batch_size,
         )
 
@@ -279,7 +279,7 @@ class ExplanationEngine:
 
         # ANCHOR
         anc = self.anchor_explainer.explain_instance(
-            x, lambda z: self.me.model.predict_proba(z)[:, cls],
+            x, lambda z: np.argmax(self._lime_predict_fn(z), axis=1),
             threshold=0.90, delta=0.15, batch_size=256,
         )
         anchor_vals = self._get_active_vector(set(anc.names()))
@@ -314,7 +314,7 @@ class ExplanationEngine:
         best = min(scores, key=scores.get)
         return results, best
 
-    def explain_instance(self, instance, method: Optional[str] = None) -> dict:
+    def explain_instance(self, instance, method: Optional[str] = None, evaluate_metrics: bool = False) -> dict:
         """
         Genera explicaciones con LIME y Anchor de forma segura, e intenta generar SHAP.
         Devuelve todos los resultados exitosos para que el frontend pueda mostrar
@@ -370,9 +370,10 @@ class ExplanationEngine:
         return {
             "method_used": primary_method,
             "prediction": str(predicted_class),
-            "label": self.label_map.get(predicted_class, str(predicted_class)),            "confidence": round(probability * 100, 2),
+            "label": self.label_map.get(str(predicted_class), str(predicted_class)),
+            "confidence": round(probability * 100, 2),
             "explanations": explanations, # Enviamos el diccionario con los 3
-            "metrics": None, # Desactivamos métricas temporalmente para ahorrar RAM
+            "metrics": self.evaluate_metrics(instance)[0] if evaluate_metrics else None,
         }
 
     # ────────────────────────────────────────────────────────────────────
@@ -439,7 +440,7 @@ class ExplanationEngine:
                         a_p[self.feature_names.index(feat)] = w
             else:
                 anc = self.anchor_explainer.explain_instance(
-                    x_p, lambda z: self.me.model.predict_proba(z)[:, cls],
+                    x_p, lambda z: np.argmax(self._lime_predict_fn(z), axis=1),
                     threshold=0.95, delta=0.1, batch_size=50,
                 )
                 a_p = self._get_active_vector(set(anc.names()))
@@ -472,7 +473,7 @@ class ExplanationEngine:
                     "model_output": {
                         "predicted_class": predicted_class,
                         "probability": probability,
-                        "label": self.label_map.get(predicted_class, str(predicted_class)),
+                        "label": self.label_map.get(str(predicted_class), str(predicted_class)),
                     }
                 }
 
