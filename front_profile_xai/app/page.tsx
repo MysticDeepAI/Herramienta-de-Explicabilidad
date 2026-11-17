@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { ArrowRight, Table2, GitBranch, BarChart3, Sparkles } from "lucide-react"
 import { Navbar } from "@/components/navbar"
+import { VideoExplainer } from "@/components/video-explainer"
 
 export default function HomePage() {
   return (
@@ -61,6 +62,20 @@ export default function HomePage() {
             Iniciar análisis
             <ArrowRight size={16} />
           </Link>
+        </div>
+
+        {/* ── Video explicativo ───────────────────────────────────── */}
+        <div style={{ marginTop: "56px" }}>
+          <p style={{
+            fontSize: "10px", fontWeight: 700, letterSpacing: "0.1em",
+            color: "#8B8080", textTransform: "uppercase", margin: "0 0 12px",
+          }}>
+            Cómo funciona
+          </p>
+          <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#141414", margin: "0 0 16px", letterSpacing: "-0.01em" }}>
+            Míralo en menos de un minuto.
+          </h2>
+          <VideoExplainer />
         </div>
 
         {/* ── Scope tags ──────────────────────────────────────────── */}

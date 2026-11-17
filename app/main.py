@@ -364,6 +364,7 @@ async def explain(payload: dict):
     instance_dict = payload.get("instance", {})
     profile = payload.get("profile", "non-expert")
     method = payload.get("method")  # "shap", "lime", "anchor", o None=auto
+    evaluate_metrics = bool(payload.get("evaluate_metrics", False))
 
     if not instance_dict:
         raise HTTPException(status_code=400, detail="El formulario llegó vacío.")
@@ -387,7 +388,7 @@ async def explain(payload: dict):
             # Si es una instancia nueva, o es la primera vez, calculamos desde cero
             logger.info("Instancia nueva. Calculando explicaciones XAI desde cero...")
             engine = _get_or_create_engine(job, features)
-            result = engine.explain_instance(instance_dict, method=method)
+            result = engine.explain_instance(instance_dict, method=method, evaluate_metrics=evaluate_metrics)
             
             # Guardamos los resultados en el caché del Job para la próxima vez
             job["last_instance"] = instance_dict
@@ -659,20 +660,26 @@ class FeedbackRequest(BaseModel):
 
 
 def _sanitize(text: str) -> str:
-    """Replace characters outside Latin-1 with safe ASCII equivalents."""
+    import re
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\*(.+?)\*',       r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'__(.+?)__',         r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'_(.+?)_',           r'\1', text, flags=re.DOTALL)
     replacements = {
-        "–": "-", "—": "-",   # en/em dash
-        "‘": "'", "’": "'",   # curly single quotes
-        "“": '"', "”": '"',   # curly double quotes
-        "…": "...",                # ellipsis
-        "°": " grados",            # degree sign (already latin-1, just in case)
+        '\u2013': '-', '\u2014': '-',
+        '\u2018': "\'", '\u2019': "\'",
+        '\u201c': '"', '\u201d': '"',
+        '\u2026': '...',
+        '\u00b0': ' grados',
+        '\u00e1': 'a', '\u00e9': 'e', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u',
+        '\u00c1': 'A', '\u00c9': 'E', '\u00cd': 'I', '\u00d3': 'O', '\u00da': 'U',
+        '\u00f1': 'n', '\u00d1': 'N',
+        '\u00fc': 'u', '\u00dc': 'U',
+        '\u00e0': 'a', '\u00e8': 'e', '\u00ec': 'i', '\u00f2': 'o', '\u00f9': 'u',
     }
     for src, dst in replacements.items():
         text = text.replace(src, dst)
-    # Drop any remaining characters outside latin-1
-    return text.encode("latin-1", errors="replace").decode("latin-1")
-
-
+    return text.encode('latin-1', errors='replace').decode('latin-1')
 def _build_feedback_pdf(data: FeedbackRequest, out_path: Path) -> None:
     """Genera el PDF de feedback y lo escribe en out_path."""
     from fpdf import FPDF
@@ -689,7 +696,7 @@ def _build_feedback_pdf(data: FeedbackRequest, out_path: Path) -> None:
             self.set_font("Helvetica", "B", 13)
             self.cell(0, 8, "Herramienta de Explicabilidad - Evaluacion de Usuario", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 9)
-            self.cell(0, 5, "Herramienta de Explicabilidad (Piloto SUSESO)", align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 5, "Herramienta de Explicabilidad", align="C", new_x="LMARGIN", new_y="NEXT")
             self.ln(3)
             self.set_draw_color(180, 180, 180)
             self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
@@ -869,7 +876,8 @@ class ExplanationReportRequest(BaseModel):
     explanation: str
     chat_history: list[dict] = []
     timestamp: str = ""
-    usuario: str = "Anónimo"
+    usuario: str = "Anonimo"
+    instances: list[dict] = []   # datos de cada instancia del lote (opcional)
 
 
 def _build_explanation_pdf(data: ExplanationReportRequest, out_path: Path) -> None:
@@ -882,7 +890,7 @@ def _build_explanation_pdf(data: ExplanationReportRequest, out_path: Path) -> No
             self.set_font("Helvetica", "B", 13)
             self.cell(0, 8, "Herramienta de Explicabilidad - Reporte", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 9)
-            self.cell(0, 5, "Herramienta de Explicabilidad - Piloto SUSESO", align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 5, "Herramienta de Explicabilidad", align="C", new_x="LMARGIN", new_y="NEXT")
             self.ln(3)
             self.set_draw_color(180, 180, 180)
             self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
@@ -923,17 +931,60 @@ def _build_explanation_pdf(data: ExplanationReportRequest, out_path: Path) -> No
     pdf.set_text_color(0, 0, 0)
     pdf.ln(4)
 
-    # Explicación
-    pdf.section_title("Explicacion en Lenguaje Natural")
-    pdf.body_text(data.explanation)
+    # Explicación — si vienen bloques de lote los separamos
+    import re as _re
+    blocks = _re.split(r'(INSTANCIA \d+)', data.explanation)
+    if len(blocks) <= 1:
+        # Instancia única
+        pdf.section_title("Explicacion en Lenguaje Natural")
+        if data.instances:
+            inst = data.instances[0]
+            items = list(inst.items())[:8]
+            inst_text = "  |  ".join(f"{k}: {v}" for k, v in items)
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(80, 80, 80)
+            pdf.multi_cell(0, 5, s(f"Datos del caso: {inst_text}"))
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(2)
+        pdf.body_text(data.explanation)
+    else:
+        # Lote — reconstruir bloques "INSTANCIA N ... texto"
+        chunk_titles = []
+        chunk_bodies = []
+        i = 1
+        while i < len(blocks):
+            title = blocks[i].strip()       # "INSTANCIA N"
+            body  = blocks[i + 1].strip() if i + 1 < len(blocks) else ""
+            chunk_titles.append(title)
+            chunk_bodies.append(body)
+            i += 2
+        for ci, (title, body) in enumerate(zip(chunk_titles, chunk_bodies)):
+            # Extraer predicción del encabezado "— Predicción: X\n\n..."
+            pred_match = _re.match(r'\s*[-—]\s*Prediccion:\s*(.+?)[\n]', body)
+            pred_label = pred_match.group(1).strip() if pred_match else ""
+            section_label = f"{title}" + (f" — Prediccion: {pred_label}" if pred_label else "")
+            pdf.section_title(s(section_label))
+            # Datos de la instancia
+            if data.instances and ci < len(data.instances):
+                inst = data.instances[ci]
+                items = list(inst.items())[:8]
+                inst_text = "  |  ".join(f"{k}: {v}" for k, v in items)
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(80, 80, 80)
+                pdf.multi_cell(0, 5, s(f"Datos del caso: {inst_text}"))
+                pdf.set_text_color(0, 0, 0)
+                pdf.ln(2)
+            # Texto de la explicación (quitar encabezado de predicción si lo hay)
+            clean_body = _re.sub(r'^[-—\s]*Prediccion:.*?\n\n', '', body, flags=_re.DOTALL).strip()
+            pdf.body_text(clean_body)
 
     # Historial del chat
     if data.chat_history:
-        pdf.section_title("Conversacion con el Asistente RAG")
+        pdf.section_title("Conversacion con el Asistente Virtual")
         for msg in data.chat_history:
             role = msg.get("role", "")
             content = msg.get("content", "")
-            label = "Usuario" if role == "user" else "Asistente"
+            label = "Usuario" if role == "user" else "Asistente Virtual"
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, s(f"{label}:"), new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "", 10)

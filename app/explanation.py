@@ -314,7 +314,7 @@ class ExplanationEngine:
         best = min(scores, key=scores.get)
         return results, best
 
-    def explain_instance(self, instance, method: Optional[str] = None) -> dict:
+    def explain_instance(self, instance, method: Optional[str] = None, evaluate_metrics: bool = False) -> dict:
         """
         Genera explicaciones con LIME y Anchor de forma segura, e intenta generar SHAP.
         Devuelve todos los resultados exitosos para que el frontend pueda mostrar
@@ -373,7 +373,7 @@ class ExplanationEngine:
             "label": self.label_map.get(str(predicted_class), str(predicted_class)),
             "confidence": round(probability * 100, 2),
             "explanations": explanations, # Enviamos el diccionario con los 3
-            "metrics": None, # Desactivamos métricas temporalmente para ahorrar RAM
+            "metrics": self.evaluate_metrics(instance)[0] if evaluate_metrics else None,
         }
 
     # ────────────────────────────────────────────────────────────────────

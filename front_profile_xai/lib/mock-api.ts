@@ -7,6 +7,7 @@ export async function downloadExplanationReport(payload: {
   chat_history: { role: string; content: string }[]
   timestamp?: string
   usuario?: string
+  instances?: Record<string, unknown>[]
 }): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/report/explanation`, {
     method: "POST",
@@ -172,15 +173,23 @@ export async function setLabels(labelMap: Record<string, string>) {
 // 7. Generar Explicación (El llamado a LIME en tu backend)
 export async function generateExplanation(profile: string, instance: any) {
   const jobId = localStorage.getItem("jobId");
-  
+  const explainerConfig = (() => {
+    try { return JSON.parse(localStorage.getItem("explainerConfig") || "{}") } catch { return {} }
+  })()
+
   const res = await fetch(`${API_BASE_URL}/explain`, {
     method: "POST",
-    headers: { 
+    headers: {
       "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true" 
+      "ngrok-skip-browser-warning": "true"
     },
-    // Enviamos el ID, el perfil de la audiencia y el diccionario con los datos del paciente/sistema
-    body: JSON.stringify({ jobId, profile, instance }) 
+    body: JSON.stringify({
+      jobId,
+      profile,
+      instance,
+      method: explainerConfig.method ?? null,
+      evaluate_metrics: explainerConfig.evaluate_metrics ?? false,
+    })
   });
   
   if (!res.ok) {
